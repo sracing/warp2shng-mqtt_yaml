@@ -1,11 +1,5 @@
 # SmarthomeNG-Items for Integration of Tinkerunity Warp 2 Charger
-
 # Tinkerunity Warp API: https://www.warp-charger.com/api.html
-# https://www.smarthomeng.de/verarbeiten-von-json-messsages-in-items
-# https://knx-user-forum.de/forum/supportforen/smarthome-py/1306678-eval-f%C3%BCr-strings?p=1650955#post1650955
-
-# Bearbeitungsstatus: Partly tested
-
 
 warp_charger:
     name: Tinkerunity Warp Charger 2
