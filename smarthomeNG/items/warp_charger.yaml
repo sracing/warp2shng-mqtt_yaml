@@ -19,7 +19,7 @@ warp_charger:
             type: bool
             cache: true
             on_change:
-              - warp_charger.evse.auto_start_charging = {"auto_start_charging":value} # Tested: OK
+              - warp_charger.evse.auto_start_charging = {"auto_start_charging":value}
               
         switch_charging:
             name: Wechselschalter zur Aktivierung vom 'stop_charging' und 'start_charging'
