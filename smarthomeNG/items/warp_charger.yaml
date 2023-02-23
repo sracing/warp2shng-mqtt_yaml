@@ -1,5 +1,5 @@
 # SmarthomeNG-Items for Integration of Tinkerunity Warp 2 Charger
-# Tinkerunity Warp API: https://www.warp-charger.com/api.html
+# Reference: Tinkerunity Warp API Documentation, MQTT section. See 'https://www.warp-charger.com/api.html'
 
 warp_charger:
     name: Tinkerunity Warp Charger 2
