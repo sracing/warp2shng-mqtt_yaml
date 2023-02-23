@@ -1,0 +1,1644 @@
+# SmarthomeNG-Items for Integration of Tinkerunity Warp 2 Charger
+
+# Tinkerunity Warp API: https://www.warp-charger.com/api.html
+# https://www.smarthomeng.de/verarbeiten-von-json-messsages-in-items
+# https://knx-user-forum.de/forum/supportforen/smarthome-py/1306678-eval-f%C3%BCr-strings?p=1650955#post1650955
+
+# Bearbeitungsstatus: Partly tested
+
+
+warp_charger:
+    name: Tinkerunity Warp Charger 2
+    visu_acl: rw
+
+    visu_control:
+        name: Steuerelemente für SmartVisu Elemente
+        remark: Nicht-MQTT Elemente zur Verwendung mit SmartVisu
+        
+        sprachausgabe:
+            name: Statusmeldung über Alexa / Sonos
+            type: bool
+            cache: true
+      
+        auto_start_charging:
+            name: Konfiguriert, ob ein angeschlossenes Fahrzeug selbstständig geladen wird
+            type: bool
+            cache: true
+            on_change:
+              - warp_charger.evse.auto_start_charging = {"auto_start_charging":value} # Tested: OK
+              
+        switch_charging:
+            name: Wechselschalter zur Aktivierung vom 'stop_charging' und 'start_charging'
+            visu_acl: rw
+            type: bool
+            on_change:
+              - warp_charger.evse.stop_charging = {"stop_charging":""} if value == False else None
+              - warp_charger.evse.start_charging = {"start_charging":""} if value == True else None
+        
+        netzwerkmodus:
+            name: Netzwerkverbindung LAN / WLAN
+            type: str
+            cache: true
+            eval: "'WLAN' if sh.warp_charger.wifi.state.connection_state() == 3 else 
+                   'LAN' if sh.warp_charger.ethernet.state.connection_state() == 3 else 'n/c'"
+            eval_trigger:
+              - warp_charger.wifi.state.connection_state
+              - warp_charger.ethernet.state.connection_state
+              
+        qualitaet:
+            name: Signalqualität [dBm] oder Bandbreite [Mbit/s]
+            type: str
+            cache: true
+            eval: "(str(sh.warp_charger.wifi.state.sta_rssi()) + ' dBm') if sh.warp_charger.wifi.state.connection_state() == 3 else (str(sh.warp_charger.ethernet.state.link_speed()) + ' Mbit/s') if sh.warp_charger.ethernet.state.connection_state() == 3 else 'n/c'"
+            eval_trigger:
+              - warp_charger.wifi.state.connection_state
+              - warp_charger.ethernet.state.connection_state
+    
+    evse:
+        name: Ladecontroller # electric vehicle supply equipment
+        
+        # Zustände
+        
+        state:
+            name: Zustand des Ladecontrollers
+            type: dict
+            mqtt_topic_in: warp_charger/evse/state
+            on_change:
+              - .iec61851_state = value['iec61851_state']
+              - .charger_state = value['charger_state']
+              - .contactor_state = value['contactor_state']
+              - .contactor_error = value['contactor_error']
+              - .allowed_charging_current = value['allowed_charging_current']
+              - .error_state = value['error_state']
+              - .lock_state = value['lock_state']
+              - .dc_fault_current_state = value['dc_fault_current_state']
+              
+            iec61851_state:
+                name: Aktueller Zustand nach IEC 61851 (ID#)
+                type: num
+                
+                text:
+                    name: Aktueller Zustand nach IEC 61851 (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Nicht verbunden','Verbunden','Lädt','Lädt mit Belüftung','Fehler')[int(value)]
+                    eval_trigger: ..
+              
+            charger_state:
+                name: Aktueller Zustand, aufbereitet vom Ladecontroller (ID#)
+                type: num
+                
+                text:
+                    name: Aktueller Zustand, aufbereitet vom Ladecontroller (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Nicht verbunden','Warte auf Ladefreigabe','Ladebereit','Lädt','Fehler')[int(value)]
+                    eval_trigger: ..
+              
+            contactor_state:
+                name: Schützüberwachung. Überwacht wird die Spannung vor und nach dem Schütz (ID#)
+                type: num
+                
+                text:
+                    name: Schützüberwachung. Überwacht wird die Spannung vor und nach dem Schütz (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Nicht stromführend vor und nach dem Schütz', 'Stromführend vor, aber nicht stromführend nach dem Schütz', 'Nicht stromführend vor, aber stromführend nach dem Schütz', 'Stromführend vor und nach dem Schütz')[int(value)]
+                    eval_trigger: ..
+              
+            contactor_error:
+                name: Fehlercode der Schützüberwachung. Ein Wert ungleich 0 zeigt einen Fehler an (ID#)
+                type: num
+                
+                text:
+                    name: Fehlercode der Schützüberwachung (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Kein Fehler',
+                           'Schütz sollte durchschalten. Kein Strom vor Schütz, kein Strom nach Schütz. Stromversorgung prüfen',
+                           'Schütz sollte durchschalten. Strom vor Schütz, kein Strom nach Schütz. Schütz defekt?',
+                           'Schütz sollte durchschalten. Kein Strom vor Schütz, Strom nach Schütz. Verkabelung prüfen',
+                           'Schütz sollte nicht durchschalten. Kein Strom vor Schütz, kein Strom nach Schütz. Stromversorgung prüfen',
+                           'Schütz sollte nicht durchschalten. Kein Strom vor Schütz, Strom nach Schütz. Verkabelung prüfen',
+                           'Schütz sollte nicht durchschalten. Strom vor Schütz, Strom nach Schütz. Schütz defekt?')[int(value)]
+                    eval_trigger: ..
+              
+            allowed_charging_current:
+                name: Maximal erlaubter Ladestrom [mA], der dem Fahrzeug zur Verfügung gestellt wird
+                remark: Dieser Strom ist das Minimum der Stromgrenzen aller Ladeslots
+                type: num
+              
+            error_state:
+                name: Aktueller Fehlerzustand (ID#)
+                type: num
+                
+                text:
+                    name: Aktueller Fehlerzustand (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('OK','Nicht definiert','DC-Fehlerstromüberwachungsfehler','Schützfehler','Kommunikationsfehler')[int(value)]
+                    eval_trigger: ..
+              
+            lock_state:
+                name: Zustand der Kabelverriegelung (ID#)
+                remark: Nur relevant für Wallboxen mit Typ-2-Dose
+                type: num
+                
+                text:
+                    name: Zustand der Kabelverriegelung (Text)
+                    remark: Nur relevant für Wallboxen mit Typ-2-Dose
+                    type: str
+                    initial_value: '0'
+                    eval: ('Initialisierung','Offen','Schließend','Geschlossen','Öffnend','Fehler')[int(value)]
+                    eval_trigger: ..
+              
+            dc_fault_current_state:
+                name: Zustand des DC-Fehlerstrom-Schutzmoduls (ID#)
+                remark: Nur WARP 2. Falls ein Gleichstromfehler auftritt, kann nicht mehr geladen werden, bis das Schutzmodul zurückgesetzt wurde. Vor dem Zurücksetzen muss der Grund des Fehlers unbedingt behoben werden! evse/reset_dc_fault_current_state setzt das Modul zurück.
+                type: num
+                
+                text:
+                    name: Zustand des DC-Fehlerstrom-Schutzmoduls (Text)
+                    remark: Nur WARP 2. Falls ein Gleichstromfehler auftritt, kann nicht mehr geladen werden, bis das Schutzmodul zurückgesetzt wurde. Vor dem Zurücksetzen muss der Grund des Fehlers unbedingt behoben werden! evse/reset_dc_fault_current_state setzt das Modul zurück.
+                    type: str
+                    initial_value: '0'
+                    eval: ('Kein Fehler','6 mA Fehlerstrom detektiert','Systemfehler','Unbekannter Fehler','Kalibrierungsfehler')[int(value)]
+                    eval_trigger: ..
+
+        hardware_configuration:
+            name: Hardwarekonfiguration des Ladecontrollers.
+            type: dict
+            mqtt_topic_in: warp_charger/evse/hardware_configuration
+            on_change:
+              - .jumper_configuration = value['jumper_configuration']
+              - .has_lock_switch = value['has_lock_switch']
+              
+            jumper_configuration:
+                name: Maximalstrom des eingehenden Kabels (ID#)
+                remark: Dieser Strom wird auf dem Ladecontroller durch Jumper oder eine Steckplatine mit Schaltern konfiguriert.
+                type: num
+                
+                text:
+                    name: Maximalstrom des eingehenden Kabels (Text)
+                    remark: Dieser Strom wird auf dem Ladecontroller durch Jumper oder eine Steckplatine mit Schaltern konfiguriert.
+                    type: str
+                    initial_value: '0'
+                    eval: ('6 Ampere','10 Ampere','13 Ampere','16 Ampere','20 Ampere','25 Ampere','32 Ampere','Kontrolliert durch Software','Nicht konfiguriert')[int(value)]
+                    eval_trigger: ..
+              
+            has_lock_switch:
+                name: Gibt an, ob die Wallbox über eine Kabelverriegelung verfügt
+                remark: false - Wallbox hat fest angeschlagenes Typ-2-Ladekabel, true - Wallbox hat eine Typ-2-Dose mit Kabelverriegelung
+                type: bool
+              
+            evse_version:
+                name: Hardware-Version des Ladecontrollers (ID#)
+                type: num
+                
+                text:
+                    name: Hardware-Version des Ladecontrollers (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: "'EVSE 1.4 (Warp 1)' if int(value) == 14 else 
+                           'EVSE 1.5 (Warp 1)' if int(value) == 15 else
+                           'EVSE 2.0 (Warp 2)' if int(value) == 20 else 'n/a'"
+                    eval_trigger: ..
+              
+            energy_meter_type:
+                name: Typ des verbauten Stromzählers. (ID#)
+                remark: Nur Warp 2. Nicht jeder Stromzähler wird von jeder Wallbox unterstützt!
+                type: num
+                
+                text:
+                    name: Typ des verbauten Stromzählers. (Text)
+                    remark: Nur Warp 2. Nicht jeder Stromzähler wird von jeder Wallbox unterstützt!
+                    type: str
+                    initial_value: '0'
+                    eval: ('Kein Stromzähler verfügbar','SDM72','SDM630','SDM72V2')[int(value)]
+                    eval_trigger: ..
+
+        slots:
+            name: Der Zustand der Ladeslots
+            type: list
+            mqtt_topic_in: warp_charger/evse/slots
+            on_change:
+              - .slot0.max_current = value[0]['max_current']
+              - .slot0.active = value[0]['active']
+              - .slot0.clear_on_disconnect = value[0]['clear_on_disconnect']
+              - .slot1.max_current = value[1]['max_current']
+              - .slot1.active = value[1]['active']
+              - .slot1.clear_on_disconnect = value[1]['clear_on_disconnect']
+              - .slot2.max_current = value[2]['max_current']
+              - .slot2.active = value[2]['active']
+              - .slot2.clear_on_disconnect = value[2]['clear_on_disconnect']
+              - .slot3.max_current = value[3]['max_current']
+              - .slot3.active = value[3]['active']
+              - .slot3.clear_on_disconnect = value[3]['clear_on_disconnect']
+              - .slot4.max_current = value[4]['max_current']
+              - .slot4.active = value[4]['active']
+              - .slot4.clear_on_disconnect = value[4]['clear_on_disconnect']
+              - .slot5.max_current = value[5]['max_current']
+              - .slot5.active = value[5]['active']
+              - .slot5.clear_on_disconnect = value[5]['clear_on_disconnect']
+              - .slot6.max_current = value[6]['max_current']
+              - .slot6.active = value[6]['active']
+              - .slot6.clear_on_disconnect = value[6]['clear_on_disconnect']
+              - .slot7.max_current = value[7]['max_current']
+              - .slot7.active = value[7]['active']
+              - .slot7.clear_on_disconnect = value[7]['clear_on_disconnect']
+              - .slot8.max_current = value[8]['max_current']
+              - .slot8.active = value[8]['active']
+              - .slot8.clear_on_disconnect = value[8]['clear_on_disconnect']
+              - .slot9.max_current = value[9]['max_current']
+              - .slot9.active = value[9]['active']
+              - .slot9.clear_on_disconnect = value[9]['clear_on_disconnect']
+              - .slot10.max_current = value[10]['max_current']
+              - .slot10.active = value[10]['active']
+              - .slot10.clear_on_disconnect = value[10]['clear_on_disconnect']
+              - .slot11.max_current = value[11]['max_current']
+              - .slot11.active = value[11]['active']
+              - .slot11.clear_on_disconnect = value[11]['clear_on_disconnect']
+              
+            slot0:
+                name: Slot Index 0
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot1:
+                name: Slot Index 1
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot2:
+                name: Slot Index 2
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot3:
+                name: Slot Index 3
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot4:
+                name: Slot Index 4
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot5:
+                name: Slot Index 5
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot6:
+                name: Slot Index 6
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot7:
+                name: Slot Index 7
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot8:
+                name: Slot Index 8
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot9:
+                name: Slot Index 9
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot10:
+                name: Slot Index 10
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+              
+            slot11:
+                name: Slot Index 11
+              
+                max_current:
+                    name: mA Maximal erlaubter Ladestrom. 6000 (=6 Ampere) bis 32000 (=32 Ampere) oder 0 falls der Slot blockiert
+                    type: num
+              
+                active:
+                    name: Gibt an ob dieser Slot aktiv ist.
+                    type: bool
+              
+                clear_on_disconnect:
+                    name: Gibt an, ob der Ladestrom dieses Slots beim Abziehen eines Fahrzeugs auf 0 gesetzt wird.
+                    type: bool
+
+        button_state:
+            name: Zustand des Tasters in der Frontblende
+            type: dict
+            mqtt_topic_in: warp_charger/evse/button_state
+            on_change:
+              - .button_press_time = value['button_press_time']
+              - .button_release_time = value['button_release_time']
+              - .button_pressed = value['button_pressed']
+              
+            button_press_time:
+                name: Zeit [ms] zu der zuletzt der Taster gedrückt wurde. 0 falls der Taster seit dem Start des Ladecontrollers nicht betätigt wurde.
+                remark: Achtung! Diese Zeit wird direkt über den Takt des Prozessors gemessen. Die Genauigkeit ist damit nur ausreichend für Zeitmessungen im Bereich Minuten bis wenige Stunden. Die Zeitmessung läuft nach ungefähr 50 Tagen über und beginnt wieder bei 0.
+                type: num
+          
+            button_release_time:
+                name: Zeit [ms] zu der zuletzt der Taster losgelassen wurde. 0 falls der Taster seit dem Start des Ladecontrollers nicht betätigt wurde.
+                remark: Achtung! Diese Zeit wird direkt über den Takt des Prozessors gemessen. Die Genauigkeit ist damit nur ausreichend für Zeitmessungen im Bereich Minuten bis wenige Stunden. Die Zeitmessung läuft nach ungefähr 50 Tagen über und beginnt wieder bei 0.
+                type: num
+          
+            button_pressed:
+                name: true, falls der Taster derzeit gedrückt ist, sonst false
+                type: bool
+
+        indicator_led:
+            name: Zustand der LED im Taster
+            type: dict
+            mqtt_topic_in: warp_charger/evse/indicator_led
+            on_change:
+              - .indication = value['indication']
+              - .duration = value['duration']
+              
+            indication:
+                name: Aktuell gesetzter Zustand (ID#)
+                remark: Achtung! Diese Zeit wird direkt über den Takt des Prozessors gemessen. Die Genauigkeit ist damit nur ausreichend für Zeitmessungen im Bereich Minuten bis wenige Stunden. Die Zeitmessung läuft nach ungefähr 50 Tagen über und beginnt wieder bei 0.
+                type: num
+                
+                text:
+                    name: Aktuell gesetzter Zustand (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: "'EVSE kontrolliert LED' if int(value) == -1 else 
+                           'Aus' if int(value) == 0 else
+                           'Per PWM gedimmtes Leuchten' if 1 <= int(value) <= 254 else
+                           'An' if int(value) == 255 else
+                           'Bestätigendes Blinken (z.B: NFC-Tag wurde erkannt)' if int(value) == 1001 else 
+                           'Ablehnendes Blinken (z.B: NFC-Tag ist unbekannt)' if int(value) == 1002 else 
+                           'Aufforderndes Blinken (z.B: NFC-Tag wird zum Laden benötigt)' if int(value) == 1003 else 'n/a'"
+                    eval_trigger: ..
+          
+            duration:
+                name: Dauer [ms] für die der gesetzte Zustand erhalten bleibt
+                remark: Achtung! Diese Zeit wird direkt über den Takt des Prozessors gemessen. Die Genauigkeit ist damit nur ausreichend für Zeitmessungen im Bereich Minuten bis wenige Stunden. Die Zeitmessung läuft nach ungefähr 50 Tagen über und beginnt wieder bei 0.
+                type: num
+
+        low_level_state:
+            name: Low-Level-Zustand des Ladecontrollers
+            type: dict
+            mqtt_topic_in: warp_charger/evse/low_level_state
+            on_change:
+              - .led_state = value['led_state']
+              - .cp_pwm_duty_cycle = value['cp_pwm_duty_cycle']
+              - .adc_values = value['adc_values']
+              - .voltages = value['voltages']
+              - .resistances = value['resistances']
+              - .gpio = value['gpio']
+              - .charging_time = value['charging_time']
+              - .time_since_state_change = value['time_since_state_change']
+              - .uptime = value['uptime']
+              
+            led_state:
+                name: Zustand der am Ladecontroller angeschlossenen LED (ID#)
+                type: num
+                
+                text:
+                    name: Zustand der am Ladecontroller angeschlossenen LED (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Aus','An','Blinkt','Flackert','Atmet',' API')[int(value)]
+                    eval_trigger: ..
+              
+            cp_pwm_duty_cycle:
+                name: Tastverhältnis [%/10] der Pulsweitenmodulation auf dem CP-Signal
+                type: num
+              
+            adc_values:
+                name: 16-Bit ADC-Rohwerte der Spannungsmessungen
+                type: list
+                on_change:
+                  - .cp_pe_vor_r_pwm_h = value[0]
+                  - .cp_pe_nach_r_pwm_h = value[1]
+                  - .cp_pe_vor_r_pwm_l = value[2]
+                  - .cp_pe_nach_r_pwm_l = value[3]
+                  - .pp_pe = value[4]
+                  - .plus12v_rail = value[3]
+                  - .minus12v_rail = value[4]
+                  
+                cp_pe_vor_r_pwm_h:
+                    name: CP/PE vor Widerstand (PWM High)
+                    type: num
+                
+                cp_pe_nach_r_pwm_h:
+                    name: CP/PE nach Widerstand (PWM High)
+                    type: num
+                
+                cp_pe_vor_r_pwm_l:
+                    name: CP/PE vor Widerstand (PWM Low)
+                    type: num
+                
+                cp_pe_nach_r_pwm_l:
+                    name: CP/PE nach Widerstand (PWM Low)
+                    type: num
+                
+                pp_pe:
+                    name: PP/PE
+                    type: num
+                
+                plus12v_rail:
+                    name: +12V Rail
+                    type: num
+                
+                minus12v_rail:
+                    name: -12V Rail
+                    type: num
+              
+            voltages:
+                name: Aus den ADC-Werten berechnete Spannungen [mV]
+                type: list
+                on_change:
+                  - .cp_pe_vor_r_pwm_h = value[0]
+                  - .cp_pe_nach_r_pwm_h = value[1]
+                  - .cp_pe_vor_r_pwm_l = value[2]
+                  - .cp_pe_nach_r_pwm_l = value[3]
+                  - .pp_pe = value[4]
+                  - .plus12v_rail = value[3]
+                  - .minus12v_rail = value[4]
+                  
+                cp_pe_vor_r_pwm_h:
+                    name: CP/PE vor Widerstand (PWM High)
+                    type: num
+                  
+                cp_pe_nach_r_pwm_h:
+                    name: CP/PE nach Widerstand (PWM High)
+                    type: num
+                
+                cp_pe_vor_r_pwm_l:
+                    name: CP/PE vor Widerstand (PWM Low)
+                    type: num
+                
+                cp_pe_nach_r_pwm_l:
+                    name: CP/PE nach Widerstand (PWM Low)
+                    type: num
+                  
+                pp_pe:
+                    name: PP/PE
+                    type: num
+                  
+                plus12v_rail:
+                    name: +12V Rail
+                    type: num
+                  
+                minus12v_rail:
+                    name: -12V Rail
+                    type: num
+              
+            resistances:
+                name: Aus den Spannungen berechnete Widerstände [Ω]
+                type: list
+                on_change:
+                  - .cp_pe = value[0]
+                  - .pp_pe = value[1]
+                  
+                cp_pe:
+                    name: CP/PE
+                    type: num
+                    
+                pp_pe:
+                    name: PP/PE
+                    type: num
+              
+            gpio:
+                name: Signale auf den GPIOs
+                type: list
+                on_change:
+                  - .stromkonfiguration_0 = value[0]
+                  - .motorfehler = value[1]
+                  - .gleichstromfehler = value[2]
+                  - .stromkonfiguration_1 = value[3]
+                  - .dc_fehlerstromschutz_test = value[4]
+                  - .abschaltung = value[5]
+                  - .taster = value[6]
+                  - .cp_PWM = value[7]
+                  - .motoreingangsschalter = value[8]
+                  - .schuetzsteuerung = value[9]
+                  - .konfigurierbarer_ausgang = value[10]
+                  - .cp_trennung = value[11]
+                  - .motor_aktiv = value[12]
+                  - .motor_phase = value[13]
+                  - .schuetzpruefung_vorher = value[14]
+                  - .schuetzpruefung_nachher = value[15]
+                  - .konfigurierbarer_eingang = value[16]
+                  - .dc_x6 = value[17]
+                  - .dc_x30 = value[18]
+                  - .led = value[19]
+                  
+                stromkonfiguration_0:
+                    name: Stromkonfiguration 0
+                    type: bool
+                    
+                motorfehler:
+                    name: Motorfehler
+                    type: bool
+                    
+                gleichstromfehler:
+                    name: Gleichstromfehler
+                    type: bool
+                    
+                stromkonfiguration_1:
+                    name: Stromkonfiguration 1
+                    type: bool
+                    
+                dc_fehlerstromschutz_test:
+                    name: DC-Fehlerstromschutz-Test
+                    type: bool
+                    
+                abschaltung:
+                    name: Abschaltung
+                    type: bool
+                    
+                taster:
+                    name: Taster
+                    type: bool
+                    
+                cp_PWM:
+                    name: CP-PWM
+                    type: bool
+                      
+                motoreingangsschalter:
+                    name: Motoreingangsschalter
+                    type: bool
+                      
+                schuetzsteuerung:
+                    name: Schützsteuerung
+                    type: bool
+                    
+                konfigurierbarer_ausgang:
+                    name: Konfigurierbarer Ausgang
+                    type: bool
+                    
+                cp_trennung:
+                    name: CP-Trennung
+                    type: bool
+                    
+                motor_aktiv:
+                    name: Motor aktiv
+                    type: bool
+                      
+                motor_phase:
+                    name: Motor-Phase
+                    type: bool
+                      
+                schuetzpruefung_vorher:
+                    name: Schützprüfung vorher
+                    type: bool
+                    
+                schuetzpruefung_nachher:
+                    name: Schützprüfung nachher
+                    type: bool
+                    
+                konfigurierbarer_eingang:
+                    name: Konfigurierbarer Eingang
+                    type: bool
+                    
+                dc_x6:
+                    name: DC X6
+                    type: bool
+                    
+                dc_x30:
+                    name: DC X30
+                    type: bool
+                    
+                led:
+                    name: LED
+                    type: bool
+              
+            charging_time:
+                name: Ungefähre Zeit [ms] des Ladevorgangs
+                remark: Nur für Lastmanagementzwecke zu verwenden!
+                type: num
+              
+            time_since_state_change:
+                name: Zeit [ms] seit dem letzten IEC-61851-Zustandswechsel. Falls der Zustand 2 (B = Lädt) ist, entspricht dieser Wert der Ladezeit.
+                remark: Achtung! Diese Zeit wird direkt über den Takt des Prozessors gemessen. Die Genauigkeit ist damit nur ausreichend für Zeitmessungen im Bereich Minuten bis wenige Stunden. Die Zeitmessung läuft nach ungefähr 50 Tagen über und beginnt wieder bei 0.
+                type: num
+              
+            uptime:
+                name: Zeit [ms] seit Starten des Ladecontrollers.
+                remark: Achtung! Diese Zeit wird direkt über den Takt des Prozessors gemessen. Die Genauigkeit ist damit nur ausreichend für Zeitmessungen im Bereich Minuten bis wenige Stunden. Die Zeitmessung läuft nach ungefähr 50 Tagen über und beginnt wieder bei 0.
+                type: num
+                
+        # Konfiguration
+                
+        # evse/external_current
+        # evse/external_clear_on_disconnect
+        # evse/management_current
+
+        auto_start_charging:
+            remark: Dieser Wert kann über evse/auto_start_charging_update mit dem selben Payload aktualisiert werden
+            name: Konfiguriert, ob ein angeschlossenes Fahrzeug selbstständig geladen wird (JSON)
+            type: dict
+            mqtt_topic_in: warp_charger/evse/auto_start_charging
+            mqtt_topic_out: warp_charger/evse/auto_start_charging_update
+            on_change:
+              - warp_charger.visu_control.auto_start_charging = value['auto_start_charging']
+              
+        # evse/global_current
+        # evse/management_enabled
+        # evse/user_current
+        # evse/user_enabled
+        # evse/external_enabled
+        # evse/external_defaults
+        # evse/modbus_tcp_enabled
+        # evse/ocpp_enabled
+        # evse/gpio_configuration
+        # evse/button_configuration
+        # evse/user_calibration
+        
+        # Kommandos
+        
+        reset_dc_fault_current_state:
+            name: Setzt das DC-Fehlerstrom-Schutzmodul zurück
+            remark: Nur WARP 2. Vor dem Zurücksetzen muss der Grund des Fehlers unbedingt behoben werden! Passwort, das zum Zurücksetzen benötigt wird lautet 0xDC42FA23
+                
+            send_password:
+                name: Impulsschalter zur Rücksetzung des DC-Fehlerstrom-Schutzmodul durch Senden des Passwortes
+                visu_acl: rw
+                type: bool
+                autotimer: 1 = false
+                on_change:
+                  - ..password = {"password":0xDC42FA23} if sh..() == True else None
+            
+            password:
+                name: Passwort, das zum Zurücksetzen benötigt wird. Das Passwort lautet 0xDC42FA23
+                type: dict
+                mqtt_topic_out: warp_charger/evse/reset_dc_fault_current_state
+                enforce_updates: true
+                
+        ## Ersetzt durch Eintrag in smartvisu.yaml        
+                
+        # switch_charging:
+            # name: Wechselschalter zur Aktivierung vom 'stop_charging' und 'start_charging'
+            # visu_acl: rw
+            # type: bool
+            # on_change:
+              # - ..stop_charging = {\"stop_charging\":""} if value == False else None
+              # - ..start_charging = {\"start_charging\":""} if value == True else None
+                                    
+        stop_charging:
+            # Ein Aufruf dieser Funktion ist äquivalent zum Stoppen über den Taster an der Wallbox: Es wird TODO LINK Slot 4 blockiert.
+            # Ein Ladevorgang kann mit evse/start_charging wieder gestartet werden.
+            # Leerer Payload. Es muss einer der folgenden Werte übergeben werden: null, "", false, 0, [] oder {}
+            # Löst eine einmalige Aktion aus. Nachrichten, die über den Broker retained wurden, werden ignoriert.
+            name: Beendet den laufenden Ladevorgang.
+            type: dict
+            mqtt_topic_out: warp_charger/evse/stop_charging
+            enforce_updates: true
+                                    
+        start_charging:
+            # Ein Aufruf dieser Funktion ist äquivalent zum Starten über den Taster an der Wallbox: Es wird TODO LINK Slot 4 freigegeben.
+            # Ein Ladevorgang kann mit evse/stop_charging wieder gestoppt werden.
+            # Leerer Payload. Es muss einer der folgenden Werte übergeben werden: null, "", false, 0, [] oder {}
+            # Löst eine einmalige Aktion aus. Nachrichten, die über den Broker retained wurden, werden ignoriert.
+            name: Startet einen Ladevorgang.
+            type: dict
+            mqtt_topic_out: warp_charger/evse/start_charging
+            enforce_updates: true
+
+
+    meter:
+        name: Stromzähler
+        
+        # Zustände
+        
+        state:
+            name: Zustand des Stromzählers
+            type: dict
+            mqtt_topic_in: warp_charger/meter/state
+            on_change:
+              - .state = value['state'] if value else None
+              - .type_meter = value['type'] if value else None
+              
+            state:
+                name: Zustand des Stromzählers (ID#)
+                type: num
+                
+                text:
+                    name: Zustand des Stromzählers (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Kein Stromzähler verbunden','Stromzähler unzuverlässig, eventuell nur einphasig verbunden.','Stromzähler verbunden')[int(value)]
+                    eval_trigger: ..
+              
+            type_meter:
+                name: Typ des verbauten Stromzählers (ID#)
+                remark: Nicht jeder Stromzähler wird von jeder Wallbox unterstützt!
+                type: num
+                
+                text:
+                    name: Typ des verbauten Stromzählers. (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Kein Stromzähler verfügbar','SDM72','SDM630','SDM72V2')[int(value)]
+                    eval_trigger: ..
+        
+        values:
+            name: Messwerte des Stromzählers
+            remark: Benötigt das Feature "meter"
+            type: dict
+            mqtt_topic_in: warp_charger/meter/values
+            on_change:
+              - .power = value['power']
+              - .energy_rel = value['energy_rel']
+              - .energy_abs = value['energy_abs']
+              
+            power:
+                name: Aktuelle Ladeleistung [W]
+                type: num
+                cache: true
+                database: true
+                database_maxage: 90
+              
+            energy_rel:
+                name: Geladene Energie seit dem letzten Reset [kWh]
+                type: num
+                cache: true
+                database: true
+                database_maxage: 735
+              
+            energy_abs:
+                name: Geladene Energie seit der Herstellung des Stromzählers [kWh]
+                type: num
+                cache: true
+                database: true
+                database_maxage: 735
+        
+        phases:
+            name: Angeschlossene und aktive Phasen
+            remark: Benötigt das Feature "meter_phases"
+            type: dict
+            mqtt_topic_in: warp_charger/meter/phases
+            on_change:
+              - .phases_active = value['phases_active']
+              - .phases_connected = value['phases_connected']
+              
+            phases_active:
+                name: Derzeit aktiven Phasen
+                type: list
+                on_change:
+                  - .phase1 = value[0]
+                  - .phase2 = value[1]
+                  - .phase3 = value[2]
+                
+                phase1:
+                    name: Phase L1 aktiv
+                    type: bool
+                
+                phase2:
+                    name: Phase L2 aktiv
+                    type: bool
+                
+                phase3:
+                    name: Phase L3 aktiv
+                    type: bool
+              
+            phases_connected:
+                name: Angeschlossenen Phasen
+                type: list
+                on_change:
+                  - .phase1 = value[0]
+                  - .phase2 = value[1]
+                  - .phase3 = value[2]
+                
+                phase1:
+                    name: Phase L1 angeschlossen
+                    type: bool
+                
+                phase2:
+                    name: Phase L2 angeschlossen
+                    type: bool
+                
+                phase3:
+                    name: Phase L3 angeschlossen
+                    type: bool
+        
+        error_counters:
+            name: Fehlerzähler der Kommunikation mit dem Stromzähler
+            type: dict
+            mqtt_topic_in: warp_charger/meter/error_counters
+            on_change:
+              - .local_timeout = value['local_timeout']
+              - .global_timeout = value['global_timeout']
+              - .illegal_function = value['illegal_function']
+              - .illegal_data_access = value['illegal_data_access']
+              - .illegal_data_value = value['illegal_data_value']
+              - .slave_device_failure = value['slave_device_failure']
+              
+            local_timeout:
+                name: Local Timeout
+                type: num
+              
+            global_timeout:
+                name: Global Timeout
+                type: num
+              
+            illegal_function:
+                name: Illegal Function
+                type: num
+              
+            illegal_data_access:
+                name: Illegal Data Access
+                type: num
+              
+            illegal_data_value:
+                name: Illegal Data Value
+                type: num
+              
+            slave_device_failure:
+                name: Slave Device Failure
+                type: num
+                
+
+    # meter/all_values
+
+    # Kommandos
+    # meter/state_update
+    # meter/values_update
+    # meter/phases_update
+    # meter/all_values_update
+    # meter/reset
+
+    # Zustände
+    # meter/last_reset
+
+    # Konfigurationen
+    # meter/type_override
+
+    # LASTMANAGER
+    # Zustände
+    # charge_manager/available_current
+    # charge_manager/state
+
+    # Konfigurationen
+    # charge_manager/config
+
+
+    # BENUTZERVERWALTUNG
+    # Zustände
+    # users/config
+
+    # Kommandos
+    # users/add
+    # users/remove
+    # users/modify
+    # users/http_auth_update
+
+    # LADETRACKER
+
+
+    charge_tracker:
+        name: Ladetracker
+        
+        # Zustände
+        
+        state:
+            name: Zustand des Stromzählers
+            type: dict
+            mqtt_topic_in: warp_charger/charge_tracker/state
+            on_change:
+              - .tracked_charges = value['tracked_charges']
+              - .first_charge_timestamp = value['first_charge_timestamp']
+              
+            tracked_charges:
+                name: Anzahl der insgesamt aufgezeichneten Ladungen
+                type: num
+              
+            first_charge_timestamp:
+                name: Ein Unix-Timestamp [Min], der den Startzeitpunkt der ersten Ladung angibt
+                remark: 0 falls zum Startzeitpunkt keine Zeitsynchronisierung verfügbar war.
+                type: num
+                
+        last_charges:
+            name: Die letzten (bis zu) 30 aufgezeichneten Ladungen
+            type: list # Liste mit dicts. ToDo: Leere oder nur teilweise gefüllte Liste?
+            mqtt_topic_in: warp_charger/charge_tracker/last_charges
+            on_change:
+              - .index0.timestamp_minutes = value[0]['timestamp_minutes'] if value != None else None
+              - .index0.charge_duration = value[0]['charge_duration'] if value != None else None
+              - .index0.user_id = value[0]['user_id'] if value != None else None
+              - .index0.energy_charged = value[0]['energy_charged'] if value != None else None
+              # - .index1.timestamp_minutes = value[1]['timestamp_minutes']
+              # - .index1.charge_duration = value[1]['charge_duration']
+              # - .index1.user_id = value[1]['user_id']
+              # - .index1.energy_charged = value[1]['energy_charged']
+              # - .index2.timestamp_minutes = value[2]['timestamp_minutes']
+              # - .index2.charge_duration = value[2]['charge_duration']
+              # - .index2.user_id = value[2]['user_id']
+              # - .index2.energy_charged = value[2]['energy_charged']
+              # - .index3.timestamp_minutes = value[3]['timestamp_minutes']
+              # - .index3.charge_duration = value[3]['charge_duration']
+              # - .index3.user_id = value[3]['user_id']
+              # - .index3.energy_charged = value[3]['energy_charged']
+              # - .index4.timestamp_minutes = value[4]['timestamp_minutes']
+              # - .index4.charge_duration = value[4]['charge_duration']
+              # - .index4.user_id = value[4]['user_id']
+              # - .index4.energy_charged = value[4]['energy_charged']
+              # - .index5.timestamp_minutes = value[5]['timestamp_minutes']
+              # - .index5.charge_duration = value[5]['charge_duration']
+              # - .index5.user_id = value[5]['user_id']
+              # - .index5.energy_charged = value[5]['energy_charged']
+              # - .index6.timestamp_minutes = value[6]['timestamp_minutes']
+              # - .index6.charge_duration = value[6]['charge_duration']
+              # - .index6.user_id = value[6]['user_id']
+              # - .index6.energy_charged = value[6]['energy_charged']
+              # - .index7.timestamp_minutes = value[7]['timestamp_minutes']
+              # - .index7.charge_duration = value[7]['charge_duration']
+              # - .index7.user_id = value[7]['user_id']
+              # - .index7.energy_charged = value[7]['energy_charged']
+              # - .index8.timestamp_minutes = value[8]['timestamp_minutes']
+              # - .index8.charge_duration = value[8]['charge_duration']
+              # - .index8.user_id = value[8]['user_id']
+              # - .index8.energy_charged = value[8]['energy_charged']
+              # - .index9.timestamp_minutes = value[9]['timestamp_minutes']
+              # - .index9.charge_duration = value[9]['charge_duration']
+              # - .index9.user_id = value[9]['user_id']
+              # - .index9.energy_charged = value[9]['energy_charged']
+              # - .index10.timestamp_minutes = value[10]['timestamp_minutes']
+              # - .index10.charge_duration = value[10]['charge_duration']
+              # - .index10.user_id = value[10]['user_id']
+              # - .index10.energy_charged = value[10]['energy_charged']
+              # - .index11.timestamp_minutes = value[11]['timestamp_minutes']
+              # - .index11.charge_duration = value[11]['charge_duration']
+              # - .index11.user_id = value[11]['user_id']
+              # - .index11.energy_charged = value[11]['energy_charged']
+              
+              # Fehlend: Index 12 bis 29
+              
+            index0:
+                name: Index 0
+              
+                timestamp_minutes:
+                    name: Ein Unix-Timestamp [min], der den Startzeitpunkt der Ladung angibt
+                    remark: 0 falls zum Startzeitpunkt keine Zeitsynchronisierung verfügbar war
+                    type: num
+              
+                charge_duration:
+                    name: Dauer des Ladevorgangs [sec]
+                    type: num
+              
+                user_id:
+                    name: ID des Benutzers der die Ladung gestartet hat
+                    remark: 0 falls eine Freigabe ohne Nutzerzuordnung erfolgt ist
+                    type: num
+              
+                energy_charged:
+                    name: Geladene Energie [kWh]
+                    remark: Null falls zum Start- oder Endzeitpunkt kein Zähler verfügbar war
+                    type: num
+                    
+        current_charge:
+            name: Information zum aktuell laufenden Ladevorgang. Falls kein Ladevorgang läuft, hat die user_id den Wert -1
+            remark: Falls kein Ladevorgang läuft, hat die user_id den Wert -1
+            type: dict
+            mqtt_topic_in: warp_charger/charge_tracker/current_charge
+            on_change:
+              - .user_id = value['user_id']
+              - .meter_start = value['meter_start']
+              - .evse_uptime_start = value['evse_uptime_start']
+              - .timestamp_minutes = value['timestamp_minutes']
+              - .authorization_type = value['authorization_type']
+              - .authorization_info = value['authorization_info'] if value != None else None
+              
+            user_id:
+                name: ID des Benutzers der die Ladung gestartet hat
+                remark: 0 falls eine Freigabe ohne Nutzerzuordnung erfolgt ist. -1 falls gerade kein Ladevorgang läuft.
+                type: num
+              
+            meter_start:
+                name: Zählerstand bei Start der Ladung. null falls zum Startzeitpunkt kein Zähler verfügbar war
+                remark: Null falls zum Startzeitpunkt kein Zähler verfügbar war
+                type: num
+              
+            evse_uptime_start:
+                name: Uptime des Ladecontrollers beim Start der Ladung [sec]
+                remark: Um zu berechnen, wie lange der Ladevogang bereits läuft kann die aktuelle Uptime aus evse/low_level_state verwendet werden
+                type: num
+              
+            timestamp_minutes:
+                name: Ein Unix-Timestamp [min], der den Startzeitpunkt der Ladung angibt
+                remark: 0 falls zum Startzeitpunkt keine Zeitsynchronisierung verfügbar war
+                type: num
+              
+            authorization_type:
+                name: Gibt an, wie der Ladevorgang freigeschaltet wurde (ID#)
+                type: num
+                
+                text:
+                    name: Gibt an, wie der Ladevorgang freigeschaltet wurde (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Benutzerfreigabe deaktiviert, Ladung wurde bei Anstecken des Fahrzeugs freigegeben',
+                           'Typ der Freischaltung ging verloren, da der ESP während des Ladevorgangs neugestartet wurde',
+                           'Ladung wurde durch NFC-Tag freigegeben. NFC-Tag wurde physisch an den WARP Charger gehalten',
+                           'Ladung wurde durch NFC-Tag freigegeben. NFC-Tag wurde per nfc/inject_tag vorgetäuscht')[int(value)]
+                    eval_trigger: ..
+              
+            authorization_info:
+                name: Weiterführende Informationen zur Benutzerfreigabe. Format hängt vom authorization_type ab
+                remark: Format hängt vom authorization_type ab (entwerder Null oder tag_id und tag_type)
+                type: str
+                    
+                    
+    # Kommandos
+            
+        remove_all_charges:
+            # Kann nicht rückgängig gemacht werden! Danach wird automatisch ein Neustart ausgeführt.
+            # true - Alle aufgezeichneten Ladungen und die Nutzernamenhistorie löschen
+            # false - Keine Aktion durchführen
+            # Hier: Senden in 'abgekürzter' Form: "warp_charger/charge_tracker/remove_all_charges" -> true
+            # Alternativ: Senden inm standard Format: "warp_charger/charge_tracker/remove_all_charges" {"do_i_know_what_i_am_doing":true}
+            name: Löscht alle aufgezeichneten Ladungen und die Nutzernamenhistorie
+            type: bool
+            initial_value: false
+            autotimer: 1 = false
+            mqtt_topic_out: warp_charger/charge_tracker/remove_all_charges
+            
+            
+    # Konfigurationen
+            
+        config:
+            name: Ladetracker-Konfiguration
+            type: dict
+            mqtt_topic_in: warp_charger/charge_tracker/config
+            mqtt_topic_out: warp_charger/charge_tracker/config_update
+            on_change:
+              - .electricity_price = value['electricity_price']
+              
+            electricity_price:
+                name: Strompreis [ct/kWh/100] der im Webinterface und Ladelog verwendet wird um Ladekosten zu berechnen
+                type: num
+                database: init
+                database_maxage: 370
+                on_change:
+                  - .. = {"electricity_price":value}
+   
+
+    # NFC-LADEFREIGABE
+    # Zustände
+    # nfc/seen_tags
+
+    # Kommandos
+    # nfc/inject_tag
+    # nfc/inject_tag_start
+    # nfc/inject_tag_stop
+
+    # Konfigurationen
+    # nfc/config
+
+
+    # NETZWERK-KONFIGURATION
+    # Konfigurationen
+    # network/config
+
+
+    # WLAN-KONFIGURATION
+
+    wifi:
+        name: WLAN Konfiguration
+        
+        # Zustände
+        
+        state:
+            name: Aktueller WLAN-Zustand
+            type: dict
+            mqtt_topic_in: warp_charger/wifi/state
+            on_change:
+              - .connection_state = value['connection_state']
+              - .ap_state = value['ap_state']
+              - .ap_bssid = value['ap_bssid']
+              - .sta_ip = value['sta_ip']
+              - .sta_rssi = value['sta_rssi']
+              - .sta_bssid = value['sta_bssid']
+              
+            connection_state:
+                name: Zustand der Verbindung zum konfigurierten WLAN (ID#)
+                type: num
+                
+                text:
+                    name: Zustand der Verbindung zum konfigurierten WLAN (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Nicht konfiguriert', 'Nicht verbunden', 'Verbinde', 'Verbunden')[int(value)]
+                    eval_trigger: ..
+              
+            ap_state:
+                name: Zustand des WLAN-Access-Points (ID#)
+                type: num
+                
+                text:
+                    name: Zustand der Verbindung zum konfigurierten WLAN (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Deaktiviert', 'Aktiviert', 'Fallback inaktiv', 'Fallback aktiv')[int(value)]
+                    eval_trigger: ..
+              
+            ap_bssid:
+                name: BSSID des WLAN-Access-Points
+                type: str
+              
+            sta_ip:
+                name: Aktuelle IP der Wallbox im konfigurierten Netz
+                remark: 0.0.0.0 falls keine Verbindung besteht
+                type: str
+              
+            sta_rssi:
+                name: Aktuelle Empfangsqualität
+                remark: 0 falls keine Verbindung besteht, sonst negativ. Werte näher 0 entsprechen einem besseren Empfang
+                type: num
+              
+            sta_bssid:
+                name: BSSID der Gegenstelle, zu der die Wallbox verbunden ist
+                type: str
+                
+    # Kommandos
+    # wifi/scan
+    # Konfigurationen
+    # wifi/sta_config
+    # wifi/ap_config
+
+
+    # LAN-VERBINDUNG
+    # Zustände
+
+
+    ethernet:
+        name: LAN Verbindung
+        
+        # Zustände
+        
+        state:
+            name: Aktueller LAN-Zustand
+            type: dict
+            mqtt_topic_in: warp_charger/ethernet/state
+            on_change:
+              - .connection_state = value['connection_state']
+              - .ip = value['ip']
+              - .full_duplex = value['full_duplex']
+              - .link_speed = value['link_speed']
+              
+            connection_state:
+                name: Zustand der Verbindung zum konfigurierten LAN (ID#)
+                type: num
+                
+                text:
+                    name: Zustand der Verbindung zum konfigurierten LAN (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Nicht konfiguriert', 'Nicht verbunden', 'Verbinde', 'Verbunden')[int(value)]
+                    eval_trigger: ..
+              
+            ip:
+                name: Aktuelle IP der Wallbox im konfigurierten Netz
+                remark: 0.0.0.0 falls keine Verbindung besteht
+                type: str
+              
+            full_duplex:
+                name: true bei einer Full-Duplex-Verbindung, sonst false
+                type: bool
+              
+            link_speed:
+                name: Ausgehandelte Verbindungsgeschwindigkeit [Mbit/s]
+                type: num
+                
+                
+    # Konfigurationen
+    # ethernet/config
+
+
+    # ZEITSYNCHRONISIERUNG
+    # Zustände
+    # ntp/state
+    # Konfigurationen
+    # ntp/config
+    
+
+    mqtt:
+        name: MQTT-Verbindung
+        
+        # Zustände
+        
+        state:
+            name: Zustand der Verbindung zum MQTT-Broker
+            type: dict
+            mqtt_topic_in: warp_charger/mqtt/state
+            on_change:
+              - .connection_state = value['connection_state']
+              - .last_error = value['last_error']
+              
+            connection_state:
+                name: Zustand der Verbindung zum MQTT-Broker (ID#)
+                type: num
+                
+                text:
+                    name: Zustand der Verbindung zum MQTT-Broker (Text)
+                    type: str
+                    initial_value: '0'
+                    eval: ('Nicht konfiguriert', 'Nicht verbunden', 'Verbunden', 'Fehler')[int(value)]
+                    eval_trigger: ..
+              
+            last_error:
+                name: Der zuletzt aufgetretene Fehler. -1 falls kein Fehler aufgetreten ist (ID#)
+                type: num
+                
+    # Konfigurationen
+    # mqtt/config
+
+
+    # WIREGUARD-VERBINDUNG
+    # Zustände
+    # wireguard/state
+    # Konfigurationen
+    # wireguard/config
+
+
+    # ZEITEINSTELLUNGEN DER REAL-TIME CLOCK
+    # Konfigurationen
+    # rtc/time
+    # rtc/config
+
+
+    # ALLGEMEINE INFORMATIONEN
+
+    info:
+        name: Allgemeine Informationen
+        
+        # Zustände
+        
+        version:
+            name: Version der Wallbox-Firmware
+            type: dict
+            mqtt_topic_in: warp_charger/info/version
+            on_change:
+              - .firmware = value['firmware']
+              - .config = value['config']
+              
+            firmware:
+                name: Zustand der Verbindung zum MQTT-Broker (ID#)
+                type: str
+              
+            config:
+                name: Zustand der Verbindung zum MQTT-Broker (ID#)
+                type: str
+                
+        modules:
+            name: Initialisierungszustand der Firmware-Module
+            type: dict
+            mqtt_topic_in: warp_charger/info/modules
+            on_change:
+              - .event_log = value['event_log']
+              - .esp32_ethernet_brick = value['esp32_ethernet_brick']
+              - .watchdog = value['watchdog']
+              - .uptime_tracker = value['uptime_tracker']
+              - .evse_v2 = value['evse_v2']
+              - .network = value['network']
+              - .wifi = value['wifi']
+              - .ethernet = value['ethernet']
+              - .ntp = value['ntp']
+              - .rtc = value['rtc']
+              - .mqtt = value['mqtt']
+              - .http = value['http']
+              - .ws = value['ws']
+              - .firmware_update = value['firmware_update']
+              - .evse_v2_meter = value['evse_v2_meter']
+              - .api_meter = value['api_meter']
+              - .meter = value['meter']
+              - .charge_manager = value['charge_manager']
+              - .cm_networking = value['cm_networking']
+              - .nfc = value['nfc']
+              - .charge_tracker = value['charge_tracker']
+              - .users = value['users']
+              - .device_name = value['device_name']
+              - .modbus_tcp = value['modbus_tcp']
+              - .wireguard = value['wireguard']
+
+            event_log:
+                name: Event Log
+                type: bool
+              
+            esp32_ethernet_brick:
+                name: ESP32 Ethernet Brick
+                type: bool
+              
+            watchdog:
+                name: Watchdog
+                type: bool
+              
+            uptime_tracker:
+                name: Uptime Tracker
+                type: bool
+              
+            evse_v2:
+                name: EVSE V2
+                type: bool
+              
+            network:
+                name: Network
+                type: bool
+              
+            wifi:
+                name: WiFi
+                type: bool
+              
+            ethernet:
+                name: Ethernet
+                type: bool
+              
+            ntp:
+                name: NTP - Network Time Protocol
+                type: bool
+              
+            rtc:
+                name: RTC - Reat Time Clock
+                type: bool
+              
+            mqtt:
+                name: MQTT
+                type: bool
+              
+            http:
+                name: HTTP API
+                type: bool
+              
+            ws:
+                name: Webservices
+                type: bool
+              
+            firmware_update:
+                name: Firmware Update
+                type: bool
+              
+            evse_v2_meter:
+                name: EVSE V2 Meter
+                type: bool
+              
+            api_meter:
+                name: API - Meter
+                type: bool
+              
+            meter:
+                name: Meter
+                type: bool
+              
+            charge_manager:
+                name: Charge Manager
+                type: bool
+              
+            cm_networking:
+                name: CM Networking
+                type: bool
+              
+            nfc:
+                name: NFC - Near Field Communication
+                type: bool
+              
+            charge_tracker:
+                name: Charge Tracker
+                type: bool
+              
+            users:
+                name: Users
+                type: bool
+              
+            device_name:
+                name: Device Name
+                type: bool
+              
+            modbus_tcp:
+                name: Modbus TCP
+                type: bool
+              
+            wireguard:
+                name: Wireguard
+                type: bool
+                
+        features:
+            name: Unterstützte Hardwarefeatures
+            type: list
+            mqtt_topic_in: warp_charger/info/features
+
+        name_wb:
+            name: Name und Typ der Wallbox
+            type: dict
+            mqtt_topic_in: warp_charger/info/name
+            on_change:
+              - .wallbox_name = value['name']
+              - .wallbox_type = value['type']
+              - .display_type = value['display_type']
+              - .uid = value['uid']
+
+            wallbox_name:
+                name: Name der Wallbox. Besteht aus Typ und UID der Wallbox
+                type: str
+
+            wallbox_type:
+                name: Typ der Wallbox
+                type: str
+
+            display_type:
+                name: Benutzerlesbarer Typ der Wallbox
+                remark: Gibt neben der Hardware-Version die Variante (Smart, Pro), die maximale Ladeleistung und eventuelle Upgrades an. z.B. "WARP2 Charger Pro 11kW +NFC"
+                type: str
+
+            uid:
+                name: UID der Wallbox bzw. des verbauten ESP (Ethernet) Bricks
+                type: str
+                
+    # Konfigurationen
+
+        display_name:
+            name: Anzeigename
+            type: dict
+            mqtt_topic_in: warp_charger/info/display_name
+            # mqtt_topic_out: warp_charger/info/display_name_update
+            on_change:
+              - .display_name = value['display_name']
+
+            display_name:
+                name: Anzeigename
+                type: str
+                on_change:
+                  - .. = {"display_name":value}
+
+        display_name_modified:
+            name: Anzahl Änderungen am Anzeigename
+            type: dict
+            mqtt_topic_in: warp_charger/info/display_name_modified
+            on_change:
+              - .modified = value['modified']
+
+            modified:
+                name: Anzahl Änderungen am Anzeigename
+                type: num
+                
+    # Zustände
+
+        last_boots:
+            name: Debug-Informationen über die letzten Firmware-Ausführungen
+            type: list # Index 0 ..9
+            mqtt_topic_in: warp_charger/info/last_boots
+            on_change:
+              - .index0.reset_reason = value[0]['reset_reason']
+              - .index0.boot_count = value[0]['boot_count']
+              - .index0.uptime = value[0]['uptime']
+              - .index0.uptime_overflows = value[0]['uptime_overflows']
+              
+            index0:
+                name: Ausführung Index 0
+
+                reset_reason:
+                    name: Grund des Neustarts. Siehe Espressif-Dokumentation (ID#)
+                    type: num
+                
+                    text:
+                        name: Grund des Neustarts lt.Espressif-Dokumentation (Text)
+                        type: str
+                        initial_value: '0'
+                        eval: ('Reset reason can not be determined', 
+                               'Reset due to power-on event',
+                               'Reset by external pin',
+                               'Software reset via esp_restart',
+                               'Software reset due to exception/panic',
+                               'Reset (software or hardware) due to interrupt watchdog',
+                               'Reset due to other watchdogs',
+                               'Reset after exiting deep sleep mode',
+                               'Brownout reset (software or hardware)',
+                               'Reset over SDIO')[int(value)]
+                        eval_trigger: ..
+
+                boot_count:
+                    # Ein Eintrag in last_boots wird erst fünf Minuten nach dem Start der Wallbox geschrieben um den Flash zu schonen.
+                    # Falls innerhalb der ersten fünf Minuten neugestartet wird, kann ein Eintrag verloren gehen, was anhand dieses Zählers bemerkt werden kann
+                    name: Zähler der angibt, der wievielte Neustart seit dem die Wallbox vom Strom getrennt wurde, durchgeführt wird. 
+                    type: num
+
+                uptime:
+                    name: Laufzeit [ms] der Firmware-Ausführung (32-Bit)
+                    type: num
+
+                uptime_overflows:
+                    name: Anzahl der Überläufe von uptime
+                    type: num
+
+    # SONSTIGES
+    # Kommandos
+    # reboot
