@@ -1,6 +1,9 @@
 # SmarthomeNG-Items for Integration of Tinkerunity Warp 2 Charger
 # Reference: Tinkerunity Warp API Documentation, MQTT section. See 'https://www.warp-charger.com/api.html'
 
+# Make sure you set the MQTT Topic-Präfix value to 'warp_charger' in the Warp Charger MQTT setup webpage - otherwise you need to change all the 'mqtt_topic_in' and 'mqtt_topic_out' attribut values in this yaml file accordingly
+
+
 warp_charger:
     name: Tinkerunity Warp Charger 2
     visu_acl: rw
