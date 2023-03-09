@@ -781,16 +781,6 @@ warp_charger:
                 type: dict
                 mqtt_topic_out: warp_charger/evse/reset_dc_fault_current_state
                 enforce_updates: true
-                
-        ## Ersetzt durch Eintrag in smartvisu.yaml        
-                
-        # switch_charging:
-            # name: Wechselschalter zur Aktivierung vom 'stop_charging' und 'start_charging'
-            # visu_acl: rw
-            # type: bool
-            # on_change:
-              # - ..stop_charging = {\"stop_charging\":""} if value == False else None
-              # - ..start_charging = {\"start_charging\":""} if value == True else None
                                     
         stop_charging:
             # Ein Aufruf dieser Funktion ist äquivalent zum Stoppen über den Taster an der Wallbox: Es wird TODO LINK Slot 4 blockiert.
