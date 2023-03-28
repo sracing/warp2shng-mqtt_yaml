@@ -529,8 +529,8 @@ warp_charger:
                   - .cp_pe_vor_r_pwm_l = value[2]
                   - .cp_pe_nach_r_pwm_l = value[3]
                   - .pp_pe = value[4]
-                  - .plus12v_rail = value[3]
-                  - .minus12v_rail = value[4]
+                  - .plus12v_rail = value[5]
+                  - .minus12v_rail = value[6]
                   
                 cp_pe_vor_r_pwm_h:
                     name: CP/PE vor Widerstand (PWM High)
@@ -569,8 +569,8 @@ warp_charger:
                   - .cp_pe_vor_r_pwm_l = value[2]
                   - .cp_pe_nach_r_pwm_l = value[3]
                   - .pp_pe = value[4]
-                  - .plus12v_rail = value[3]
-                  - .minus12v_rail = value[4]
+                  - .plus12v_rail = value[5]
+                  - .minus12v_rail = value[6]
                   
                 cp_pe_vor_r_pwm_h:
                     name: CP/PE vor Widerstand (PWM High)
